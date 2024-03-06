@@ -105,7 +105,6 @@ func (d *Decoder) IsWhoIs(message []byte) bool {
 	if err != nil {
 		return false
 	}
-
 	err = d.APDU(&apdu)
 	if err != nil {
 		log.Printf("error getting APDU")
@@ -116,7 +115,15 @@ func (d *Decoder) IsWhoIs(message []byte) bool {
 		dec := NewDecoder(apdu.RawData)
 		var low, high int32
 		dec.WhoIs(&low, &high)
-		return true
+		if mod == 1 && npdu.Destination.Net == 65535 {
+			return true
+		}
+		if mod == 2 && npdu.Destination.Net != 65535 {
+			return true
+		}
+		if mod == 3 {
+			return true
+		}
 	}
 
 	return false

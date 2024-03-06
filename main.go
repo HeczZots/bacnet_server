@@ -16,6 +16,11 @@ const DebugLevel = 0
 var myIp = "192.168.5.37"
 var bac0 = 47808
 
+// 1 broadcast mode
+// 2 unicast mode
+// 0 multicast mode
+var mod = 3
+
 func main() {
 	_, ipNet, err := net.ParseCIDR(findCIDR(myIp))
 	if err != nil {
@@ -57,23 +62,17 @@ func main() {
 			l.Err(err)
 			continue
 		}
-		decoder := NewDecoder(b)
 		go func(b []byte) {
-
+			decoder := NewDecoder(b)
 			if !decoder.IsWhoIs(b[:n]) {
 				return
 			}
 
 			l.Info().Msgf("received Who is")
 
-			if UDPToAddress(source).IsBroadcast() {
-				_, err = list.WriteToUDP(testiamSADR, &d)
-				l.Info().Msgf("Iam To broadcast")
-			} else {
-				source.IP = source.IP.To4()
-				_, err = list.WriteToUDP(testiamSADR, source)
-				l.Info().Msgf("Iam To %v ", source)
-			}
+			_, err = list.WriteToUDP(testiamSADR, &d)
+
+			l.Info().Msgf("Iam To %v ", source)
 
 			if err != nil {
 				l.Err(err)
