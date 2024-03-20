@@ -1,28 +1,69 @@
 package main
 
 import (
+	"bacnet_ecosystem_test/btypes"
+	dec "bacnet_ecosystem_test/decoder"
+	"bacnet_ecosystem_test/wireshark"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
-	"strings"
+	"sync"
 
 	"github.com/rs/zerolog"
+	"github.com/urfave/cli"
 )
 
 const DebugLevel = 0
 
-var myIp = "192.168.5.37"
+var myIp = "192.168.5.114"
 var bac0 = 47808
 
 // 1 broadcast mode
 // 2 unicast mode
 // 0 multicast mode
-var mod = 3
+var mod = 2
+var ObjList string
 
 func main() {
-	_, ipNet, err := net.ParseCIDR(findCIDR(myIp))
+	app := cli.NewApp()
+	app.Name = "Bacnet simple server"
+	app.Usage = "Server for transferring data with Bacnet client"
+	app.Version = "1"
+	app.Commands = []cli.Command{
+		{
+			Name: "start",
+			Aliases: []string{
+				"s",
+			},
+			Usage:  "Start server",
+			Action: start_server,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:        "hex",
+					Usage:       "convert hex string to byte array",
+					Destination: &ObjList,
+				},
+			},
+		},
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := app.Run(os.Args)
+		if err != nil {
+			log.Println(err)
+		}
+		os.Exit(3)
+	}()
+}
+
+func start_server(c *cli.Context) {
+	ol := wireshark.NewObjList(ObjList)
+	fmt.Println(ol)
+	_, ipNet, err := net.ParseCIDR(btypes.FindCIDR(myIp))
 	if err != nil {
 		log.Printf(err.Error())
 		return
@@ -39,7 +80,7 @@ func main() {
 	}
 
 	// myAddr := IPPortToAddress(ip, bac0)
-	broadcastAddr := IPPortToAddress(broadcast, bac0)
+	broadcastAddr := btypes.IPPortToAddress(broadcast, bac0)
 	listenAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", myIp, bac0))
 
 	list, err := net.ListenUDP("udp", listenAddr)
@@ -51,7 +92,7 @@ func main() {
 
 	l.Info().Msgf("listening on started %s", listenAddr)
 	for {
-		d, err := broadcastAddr.UDPAddr()
+		dest, err := broadcastAddr.UDPAddr()
 		if err != nil {
 			l.Err(err)
 			return
@@ -62,15 +103,18 @@ func main() {
 			l.Err(err)
 			continue
 		}
+
 		go func(b []byte) {
-			decoder := NewDecoder(b)
-			if !decoder.IsWhoIs(b[:n]) {
+			decoder := dec.NewDecoder(b)
+
+			if !decoder.IsWhoIs(b[:n]) || !decoder.IsScan(b[:n]) {
 				return
 			}
 
 			l.Info().Msgf("received Who is")
-
-			_, err = list.WriteToUDP(testiamSADR, &d)
+			for _, iam := range IAmArr {
+				_, err = list.WriteToUDP(iam, &dest)
+			}
 
 			l.Info().Msgf("Iam To %v ", source)
 
@@ -80,63 +124,4 @@ func main() {
 			}
 		}(b)
 	}
-}
-
-func (a *Address) IsBroadcast() bool {
-	if a.Net == broadcastNetwork || a.MacLen == 0 {
-		return true
-	}
-	return false
-}
-
-func (a *Address) UDPAddr() (net.UDPAddr, error) {
-	if len(a.Mac) != 6 {
-		return net.UDPAddr{}, fmt.Errorf("mac is too short at %d", len(a.Mac))
-	}
-	port := uint(a.Mac[4])<<8 | uint(a.Mac[5])
-	ip := net.IPv4(a.Mac[0], a.Mac[1], a.Mac[2], a.Mac[3])
-	return net.UDPAddr{
-		IP:   ip,
-		Port: int(port),
-	}, nil
-}
-
-func findCIDR(s string) string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-
-	for _, a := range addrs {
-		if strings.Contains(a.String(), s) {
-			return a.String()
-		}
-	}
-	return ""
-}
-
-func IPPortToAddress(ip net.IP, port int) *Address {
-	return UDPToAddress(&net.UDPAddr{
-		IP:   ip.To4(),
-		Port: port,
-	})
-}
-
-// UDPToAddress converts a given udp address into a bacnet address
-func UDPToAddress(n *net.UDPAddr) *Address {
-	a := &Address{}
-	p := uint16(n.Port)
-	// Length of IP plus the port
-	length := net.IPv4len + 2
-	a.Mac = make([]uint8, length)
-	//Encode ip
-	for i := 0; i < net.IPv4len; i++ {
-		a.Mac[i] = n.IP[i]
-	}
-	// Encode port
-	a.Mac[net.IPv4len+0] = uint8(p >> 8)
-	a.Mac[net.IPv4len+1] = uint8(p & 0x00FF)
-
-	a.MacLen = uint8(length)
-	return a
 }
